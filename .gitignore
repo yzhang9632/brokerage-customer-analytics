@@ -1,5 +1,6 @@
-# 数据与数据库文件不进 Git，任何人 clone 后用脚本一键重建
-data/
+# 完整数据与数据库文件不进 Git；仅保留小样本演示包
+data/*
+!data/sample/
 *.db
 *.db-wal
 *.db-shm

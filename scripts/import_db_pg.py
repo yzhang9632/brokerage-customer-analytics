@@ -10,6 +10,7 @@ PostgreSQL 正式版一键重建：清空 brokerage 库的 public schema → 建
     python scripts/import_db_pg.py
 可选环境变量：PGHOST（默认 127.0.0.1）、PGPORT（5432）、PGUSER（postgres）、PGDATABASE（brokerage）。
 """
+import argparse
 import os
 from pathlib import Path
 
@@ -51,6 +52,12 @@ def load_csv(cur: psycopg.Cursor, table: str, path: Path, dtype=None) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="PostgreSQL 数据导入")
+    parser.add_argument("--sample", action="store_true", help="导入仓库自带 data/sample 小样本演示包")
+    args = parser.parse_args()
+    raw_dir = BASE_DIR / "data" / "sample" if args.sample else RAW
+    gen_dir = BASE_DIR / "data" / "sample" if args.sample else GEN
+
     dsn = {
         "host": os.getenv("PGHOST", "127.0.0.1"),
         "port": int(os.getenv("PGPORT", "5432")),
@@ -65,13 +72,13 @@ def main() -> None:
             cur.execute(SCHEMA.read_text(encoding="utf-8"))
 
             print("灌入真实层：")
-            load_csv(cur, "stock", RAW / "stock_info.csv", dtype={"stock_code": str})
-            load_csv(cur, "daily_quote", RAW / "quotes_all.csv", dtype={"stock_code": str})
+            load_csv(cur, "stock", raw_dir / "stock_info.csv", dtype={"stock_code": str})
+            load_csv(cur, "daily_quote", raw_dir / "quotes_all.csv", dtype={"stock_code": str})
 
             print("灌入生成层：")
             for table in ["branch", "customer", "account", "fund_flow", "trade",
                           "position_snapshot", "asset_snapshot"]:
-                load_csv(cur, table, GEN / f"{table}.csv",
+                load_csv(cur, table, gen_dir / f"{table}.csv",
                          dtype={"stock_code": str} if table in ("trade", "position_snapshot") else None)
 
         conn.commit()
@@ -80,7 +87,7 @@ def main() -> None:
             for table in TABLES:
                 cur.execute(f"SELECT COUNT(*) FROM {table}")
                 print(f"  {table}: {cur.fetchone()[0]}")
-    print("\nPostgreSQL 数据库已重建：brokerage")
+    print(f"\nPostgreSQL 数据库已重建：{dsn['dbname']}")
 
 
 if __name__ == "__main__":

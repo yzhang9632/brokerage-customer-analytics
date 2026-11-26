@@ -137,6 +137,7 @@ brokerage/
 │   ├── schema_pg.sql           # 9 表 DDL
 │   ├── queries_pg.sql          # Q1–Q12
 │   └── indexes_pg.sql          # 优化索引
+├── data/sample/                # 小样本演示包：100 客户 + 真实行情
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -154,7 +155,7 @@ brokerage/
 
 ```bash
 git clone https://github.com/lilianrong/brokerage-customer-analytics.git
-cd brokerage
+cd brokerage-customer-analytics
 python -m pip install -r requirements.txt
 ```
 
@@ -172,7 +173,20 @@ cp .env.example .env
 
 `.env` 包含个人数据库密码，已被 `.gitignore` 排除，不应上传。
 
-### 一键重建数据
+### 快速演示（使用仓库自带小样本）
+
+仓库的 `data/sample/` 已包含 **100 名客户、约 1 个月合成交易，以及 300 只股票的真实行情**，无需调用 AKShare 或重新造数。
+
+完成上述 PostgreSQL 建库和 `.env` 配置后，直接执行：
+
+```bash
+python scripts/import_db_pg.py --sample
+streamlit run app/Home.py
+```
+
+该模式用于快速检查页面与事务功能；样本规模较小，不应用于复现性能基准数字。
+
+### 一键重建完整数据
 
 ```bash
 python scripts/fetch_quotes.py
@@ -183,7 +197,7 @@ python scripts/check_quality_pg.py
 python scripts/benchmark_pg.py
 ```
 
-数据文件不进入 Git，任何人均可通过上述脚本重新生成。若只需快速验证，可将造数参数改为 `--customers 100 --months 1`。
+完整数据文件不进入 Git，任何人均可通过上述脚本重新生成；仓库仅保留 `data/sample/` 小样本演示包。需要重新生成该演示包时，可运行 `python scripts/generate_data.py --customers 100 --months 1 --out data/sample`，再将 `data/raw/stock_info.csv` 和 `quotes_all.csv` 复制到同一目录。
 
 ### 启动看板
 

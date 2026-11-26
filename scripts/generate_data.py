@@ -67,7 +67,9 @@ def main() -> None:
     parser.add_argument("--customers", type=int, default=100)
     parser.add_argument("--months", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--out", default="", help="输出目录（默认 data/generated，可用 data/sample 生成演示包）")
     args = parser.parse_args()
+    out_dir = Path(args.out) if args.out else OUT_DIR
     rng = random.Random(args.seed)
 
     # ---------- 真实行情与交易日历 ----------
@@ -88,9 +90,9 @@ def main() -> None:
     print(f"交易窗口：{trading_days[0]} ~ {trading_days[-1]}，{len(trading_days)} 个交易日，{len(months)} 个月")
 
     # ---------- 静态表 ----------
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(BRANCHES, columns=["branch_id", "branch_name", "city"]).to_csv(
-        OUT_DIR / "branch.csv", index=False, encoding="utf-8-sig")
+        out_dir / "branch.csv", index=False, encoding="utf-8-sig")
 
     personas = list(PERSONA_WEIGHTS)
     weights = list(PERSONA_WEIGHTS.values())
@@ -267,7 +269,7 @@ def main() -> None:
 
     # ---------- 输出 ----------
     def save(name, rows, cols):
-        pd.DataFrame(rows, columns=cols).to_csv(OUT_DIR / f"{name}.csv", index=False, encoding="utf-8-sig")
+        pd.DataFrame(rows, columns=cols).to_csv(out_dir / f"{name}.csv", index=False, encoding="utf-8-sig")
         print(f"{name}.csv：{len(rows)} 行")
 
     save("customer", customers, ["customer_id", "name", "gender", "birth_year", "branch_id", "open_date", "risk_level"])

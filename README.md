@@ -153,7 +153,7 @@ brokerage/
 ### 安装与配置
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/lilianrong/brokerage-customer-analytics.git
 cd brokerage
 python -m pip install -r requirements.txt
 ```

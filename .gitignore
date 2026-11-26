@@ -1,0 +1,20 @@
+# 数据与数据库文件不进 Git，任何人 clone 后用脚本一键重建
+data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+__pycache__/
+*.pyc
+.venv/
+
+# 本机密码与个人启动脚本，不上传
+.env
+start_dashboard.bat
+
+# SQLite 迁移前备份，不属于 PostgreSQL 正式交付
+sql/schema.sql
+sql/queries.sql
+scripts/import_db.py
+scripts/check_quality.py

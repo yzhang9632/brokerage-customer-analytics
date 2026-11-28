@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-PostgreSQL 正式版一键重建：清空 brokerage 库的 public schema → 建 9 表 → COPY 导入 CSV。
+Production PostgreSQL one-step rebuild: clear the public schema in the brokerage database,
+create 9 tables, then import CSV files with COPY.
 
-首次准备（只需一次）：
+First-time setup (only once):
     createdb -h 127.0.0.1 -U postgres brokerage
-运行前设置连接环境变量（密码不写进代码）：
-    Windows PowerShell: $env:PGPASSWORD="你的密码"
-    Git Bash:           export PGPASSWORD="你的密码"
+Set the connection environment variable before running (do not hard-code the password):
+    Windows PowerShell: $env:PGPASSWORD="your_password"
+    Git Bash:           export PGPASSWORD="your_password"
     python scripts/import_db_pg.py
-可选环境变量：PGHOST（默认 127.0.0.1）、PGPORT（5432）、PGUSER（postgres）、PGDATABASE（brokerage）。
+Optional environment variables: PGHOST (default 127.0.0.1), PGPORT (5432), PGUSER (postgres),
+PGDATABASE (brokerage).
 """
 import argparse
 import os
@@ -34,26 +36,27 @@ TABLES = ["branch", "customer", "account", "stock", "daily_quote",
 
 def load_csv(cur: psycopg.Cursor, table: str, path: Path, dtype=None) -> None:
     if not path.exists():
-        print(f"  [跳过] {path.name} 不存在")
+        print(f"  [SKIP] {path.name} does not exist")
         return
     df = pd.read_csv(path, dtype=dtype)
     if table == "trade" and "month" not in df.columns:
-        # PostgreSQL 生成列要求表达式不可变，日期转文本不满足；改由导入脚本生成月份
+        # PostgreSQL generated columns require immutable expressions; date-to-text conversion
+        # does not qualify, so the import script generates the month instead.
         df["month"] = df["trade_date"].astype(str).str[:7]
     if df.empty:
-        print(f"  [跳过] {table} 0 行")
+        print(f"  [SKIP] {table}: 0 rows")
         return
-    # PostgreSQL COPY：比逐行 INSERT 快得多，百万行扩量也适用
+    # PostgreSQL COPY is much faster than row-by-row INSERT and also scales to millions of rows.
     csv_text = df.to_csv(index=False, header=False)
     columns = ",".join(df.columns)
     with cur.copy(f"COPY {table} ({columns}) FROM STDIN WITH (FORMAT CSV)") as copy:
         copy.write(csv_text)
-    print(f"  {table}: {len(df)} 行")
+    print(f"  {table}: {len(df)} rows")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PostgreSQL 数据导入")
-    parser.add_argument("--sample", action="store_true", help="导入仓库自带 data/sample 小样本演示包")
+    parser = argparse.ArgumentParser(description="PostgreSQL data import")
+    parser.add_argument("--sample", action="store_true", help="Import the small demo dataset bundled in data/sample")
     args = parser.parse_args()
     raw_dir = BASE_DIR / "data" / "sample" if args.sample else RAW
     gen_dir = BASE_DIR / "data" / "sample" if args.sample else GEN
@@ -67,15 +70,15 @@ def main() -> None:
     }
     with psycopg.connect(**dsn) as conn:
         with conn.cursor() as cur:
-            print("重建 public schema 并建表：")
+            print("Rebuilding the public schema and creating tables:")
             cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
             cur.execute(SCHEMA.read_text(encoding="utf-8"))
 
-            print("灌入真实层：")
+            print("Loading real market data:")
             load_csv(cur, "stock", raw_dir / "stock_info.csv", dtype={"stock_code": str})
             load_csv(cur, "daily_quote", raw_dir / "quotes_all.csv", dtype={"stock_code": str})
 
-            print("灌入生成层：")
+            print("Loading generated data:")
             for table in ["branch", "customer", "account", "fund_flow", "trade",
                           "position_snapshot", "asset_snapshot"]:
                 load_csv(cur, table, gen_dir / f"{table}.csv",
@@ -83,11 +86,11 @@ def main() -> None:
 
         conn.commit()
         with conn.cursor() as cur:
-            print("\n各表行数：")
+            print("\nRow counts by table:")
             for table in TABLES:
                 cur.execute(f"SELECT COUNT(*) FROM {table}")
                 print(f"  {table}: {cur.fetchone()[0]}")
-    print(f"\nPostgreSQL 数据库已重建：{dsn['dbname']}")
+    print(f"\nPostgreSQL database rebuilt: {dsn['dbname']}")
 
 
 if __name__ == "__main__":

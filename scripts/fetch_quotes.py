@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-W2 行情 ETL：拉取沪深300成分股近一年日线，落地 CSV 缓存。
+W2 market data ETL: fetch one year of daily quotes for CSI 300 constituents and cache them as CSV files.
 
-用法：
-    python scripts/fetch_quotes.py --limit 5   # 试跑 5 只，验证接口与网络
-    python scripts/fetch_quotes.py             # 全量约 300 只（限速约 5-10 分钟）
-    python scripts/fetch_quotes.py --force     # 忽略缓存全部重拉
+Usage:
+    python scripts/fetch_quotes.py --limit 5   # Test with 5 stocks to verify the API and network
+    python scripts/fetch_quotes.py             # Full run of about 300 stocks (throttled; takes about 5-10 minutes)
+    python scripts/fetch_quotes.py --force     # Ignore the cache and fetch everything again
 
-产出（data/raw/）：
-    constituents.csv        成分股名单
-    quotes/<code>.csv       每只股票一年日线（已存在则跳过，支持断点续跑）
-    quotes_all.csv          合并后的全量行情（后续导入 SQLite 用）
+Outputs (data/raw/):
+    constituents.csv        Constituent list
+    quotes/<code>.csv       One year of daily quotes per stock (existing files are skipped to support resuming)
+    quotes_all.csv          Merged quotes for all stocks (for subsequent import into SQLite)
 
-注意：
-    - 价格默认不复权（ADJUST = ""），因为后续造数要锚定当日真实成交价；
-      如需前复权分析可改为 "qfq" 后加 --force 重拉。
-    - 停牌缺失日直接跳过，造数只使用有行情的交易日，天然自洽。
-    - 接口失败的个股会列入末尾清单，重跑本脚本即可只补拉失败的（缓存自动跳过已成功的）。
+Notes:
+    - Prices are unadjusted by default (ADJUST = "") because later data generation must use actual traded prices;
+      for forward-adjusted analysis, change this to "qfq" and rerun with --force.
+    - Days missing due to trading suspensions are skipped. Data generation uses only trading days with quotes,
+      keeping the data internally consistent.
+    - Stocks that fail to fetch are listed at the end. Rerun this script to retry only those stocks;
+      successfully fetched stocks are skipped automatically through the cache.
 """
 import argparse
 import time
@@ -30,9 +32,9 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = BASE_DIR / "data" / "raw"
 QUOTES_DIR = RAW_DIR / "quotes"
 
-INDEX_CODE = "000300"  # 沪深300
-ADJUST = ""            # 不复权；"qfq" = 前复权
-SLEEP_SECONDS = 0.4    # 每只之间的限速，防接口封禁
+INDEX_CODE = "000300"  # CSI 300
+ADJUST = ""            # Unadjusted; "qfq" = forward-adjusted
+SLEEP_SECONDS = 0.4    # Throttle between stocks to avoid API rate limiting
 
 COLUMN_MAP = {
     "日期": "trade_date",
@@ -47,14 +49,14 @@ KEEP_COLUMNS = ["trade_date", "open", "high", "low", "close", "volume", "amount"
 
 
 def fetch_constituents() -> pd.DataFrame:
-    """获取沪深300成分股名单。AKShare 接口随版本变动，做主备两个接口回退。"""
+    """Fetch the CSI 300 constituent list, with fallback between two AKShare APIs that vary by version."""
     try:
         df = ak.index_stock_cons_csindex(INDEX_CODE)
         out = df[["成分券代码", "成分券名称"]].copy()
         out.columns = ["stock_code", "stock_name"]
         return out
     except Exception as e:
-        print(f"[warn] 中证指数接口失败（{e}），改用新浪接口")
+        print(f"[warn] CSI Index API failed ({e}); falling back to the Sina API")
     df = ak.index_stock_cons_sina(INDEX_CODE)
     out = df[["品种代码", "品种名称"]].copy()
     out.columns = ["stock_code", "stock_name"]
@@ -62,7 +64,7 @@ def fetch_constituents() -> pd.DataFrame:
 
 
 def fetch_one(code: str, start: str, end: str) -> pd.DataFrame:
-    """拉单只股票日线，统一为英文列名 + ISO 日期字符串。"""
+    """Fetch daily quotes for one stock and standardize English column names and ISO date strings."""
     df = ak.stock_zh_a_hist(
         symbol=code, period="daily", start_date=start, end_date=end, adjust=ADJUST
     )
@@ -74,20 +76,20 @@ def fetch_one(code: str, start: str, end: str) -> pd.DataFrame:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="沪深300近一年日线 ETL")
-    parser.add_argument("--limit", type=int, default=0, help="只拉前 N 只（调试用）")
-    parser.add_argument("--force", action="store_true", help="忽略本地缓存全部重拉")
+    parser = argparse.ArgumentParser(description="CSI 300 one-year daily quote ETL")
+    parser.add_argument("--limit", type=int, default=0, help="Fetch only the first N stocks (for debugging)")
+    parser.add_argument("--force", action="store_true", help="Ignore the local cache and fetch everything again")
     args = parser.parse_args()
 
     start = (date.today() - timedelta(days=365)).strftime("%Y%m%d")
     end = date.today().strftime("%Y%m%d")
-    print(f"行情区间：{start} ~ {end}（不复权）")
+    print(f"Quote range: {start} to {end} (unadjusted)")
 
     QUOTES_DIR.mkdir(parents=True, exist_ok=True)
 
     cons = fetch_constituents()
     cons.to_csv(RAW_DIR / "constituents.csv", index=False, encoding="utf-8-sig")
-    print(f"成分股名单：{len(cons)} 只，已存 constituents.csv")
+    print(f"Constituents: {len(cons)} stocks; saved to constituents.csv")
     if args.limit:
         cons = cons.head(args.limit)
 
@@ -100,34 +102,35 @@ def main() -> None:
         if cache.exists() and not args.force:
             cached = pd.read_csv(cache, dtype={"stock_code": str})
             frames.append(cached)
-            print(f"[{i}/{total}] {code} 缓存命中（{len(cached)} 行），跳过")
+            print(f"[{i}/{total}] {code} cache hit ({len(cached)} rows); skipped")
             continue
 
         try:
             df = fetch_one(code, start, end)
             if df.empty:
-                print(f"[{i}/{total}] {code} {row.stock_name} 无数据（可能长期停牌），跳过")
+                print(f"[{i}/{total}] {code} {row.stock_name} has no data (possibly suspended); skipped")
             else:
                 df.to_csv(cache, index=False, encoding="utf-8-sig")
                 frames.append(df)
-                print(f"[{i}/{total}] {code} {row.stock_name} {len(df)} 行")
+                print(f"[{i}/{total}] {code} {row.stock_name}: {len(df)} rows")
         except Exception as e:
             failed.append(code)
-            print(f"[{i}/{total}] {code} 拉取失败：{e}")
+            print(f"[{i}/{total}] {code} fetch failed: {e}")
         time.sleep(SLEEP_SECONDS)
 
     if frames:
         all_df = pd.concat(frames, ignore_index=True)
-        # 缓存读出的是 str、新拉的是 datetime.date，统一成 ISO 字符串再合并输出
+        # Cached dates are read as str while newly fetched dates are datetime.date;
+        # standardize them as ISO strings before merging and writing.
         all_df["trade_date"] = all_df["trade_date"].astype(str)
         all_df.to_csv(RAW_DIR / "quotes_all.csv", index=False, encoding="utf-8-sig")
         print(
-            f"\nquotes_all.csv 已生成：{len(all_df)} 行，"
-            f"{all_df['stock_code'].nunique()} 只股票，"
-            f"交易日 {all_df['trade_date'].min()} ~ {all_df['trade_date'].max()}"
+            f"\nquotes_all.csv generated: {len(all_df)} rows, "
+            f"{all_df['stock_code'].nunique()} stocks, "
+            f"trading dates {all_df['trade_date'].min()} to {all_df['trade_date'].max()}"
         )
     if failed:
-        print(f"失败 {len(failed)} 只：{','.join(failed)}\n重跑本脚本即可补拉（已成功的走缓存）。")
+        print(f"Failed: {len(failed)} stocks: {','.join(failed)}\nRerun this script to retry them (successful stocks use the cache).")
 
 
 if __name__ == "__main__":

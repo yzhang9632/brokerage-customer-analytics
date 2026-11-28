@@ -1,4 +1,4 @@
-# 完整数据与数据库文件不进 Git；仅保留小样本演示包
+# Exclude full data and database files; keep only the sample dataset
 data/*
 !data/sample/
 *.db
@@ -10,11 +10,11 @@ __pycache__/
 *.pyc
 .venv/
 
-# 本机密码与个人启动脚本，不上传
+# Personal credentials and local launcher
 .env
 start_dashboard.bat
 
-# SQLite 迁移前备份，不属于 PostgreSQL 正式交付
+# Legacy SQLite files excluded from the formal PostgreSQL submission
 sql/schema.sql
 sql/queries.sql
 scripts/import_db.py

@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-W3 造数脚本：生成 7 张业务表 CSV（branch/customer/account/fund_flow/trade/两张月末快照）。
+W3 data generation script: Generate CSV files for seven business tables
+(branch/customer/account/fund_flow/trade/two month-end snapshots).
 
-真实性规则（报告"数据生成方法论"素材）：
-  1. 交易日期只取 quotes_all.csv 中的真实交易日；
-  2. 成交价落在当日真实 [low, high] 区间，保留两位小数；
-  3. 数量为 100 整数倍，amount = price × volume，忽略佣金（口径写入报告）；
-  4. 先入金后交易：维护每账户现金账本与持仓账本，买入不超现金、卖出不超持仓；
-  5. 5 种客户画像：dca 定投 / active 活跃 / trend 趋势 / dormant 沉睡 / whale 大户；
-  6. 月末快照由流水 + 真实收盘价聚合，非独立编造。
+Realism rules (material for the report's "Data Generation Methodology" section):
+  1. Use only actual trading dates from quotes_all.csv for trade dates;
+  2. Keep execution prices within the actual [low, high] range for the day, rounded to two decimal places;
+  3. Use volumes in multiples of 100, with amount = price × volume; commissions are ignored
+     (document this convention in the report);
+  4. Fund accounts before trading: maintain cash and holdings ledgers for each account;
+     buys cannot exceed available cash, and sells cannot exceed holdings;
+  5. Five customer personas: dca (dollar-cost averaging) / active / trend / dormant / whale;
+  6. Aggregate month-end snapshots from transactions and actual closing prices rather than
+     inventing them independently.
 
-用法：
-    python scripts/generate_data.py --customers 100 --months 1     # v1 小样本（M3）
-    python scripts/generate_data.py --customers 5000 --months 12   # 全量
-输出：data/generated/*.csv，随机种子固定，全组重跑结果一致。
+Usage:
+    python scripts/generate_data.py --customers 100 --months 1     # v1 small sample (M3)
+    python scripts/generate_data.py --customers 5000 --months 12   # full dataset
+Output: data/generated/*.csv. A fixed random seed ensures identical results when any team member reruns the script.
 """
 import argparse
 import random
@@ -26,27 +30,39 @@ RAW_DIR = BASE_DIR / "data" / "raw"
 OUT_DIR = BASE_DIR / "data" / "generated"
 
 BRANCHES = [
-    (1, "深圳福田营业部", "深圳"), (2, "深圳南山营业部", "深圳"),
-    (3, "广州天河营业部", "广州"), (4, "上海浦东营业部", "上海"),
-    (5, "上海静安营业部", "上海"), (6, "北京朝阳营业部", "北京"),
-    (7, "北京海淀营业部", "北京"), (8, "成都高新营业部", "成都"),
-    (9, "杭州西湖营业部", "杭州"), (10, "香港中环营业部", "香港"),
+    (1, "Shenzhen Futian Branch", "Shenzhen, China"), (2, "Shenzhen Nanshan Branch", "Shenzhen, China"),
+    (3, "Guangzhou Tianhe Branch", "Guangzhou, China"), (4, "Shanghai Pudong Branch", "Shanghai, China"),
+    (5, "Shanghai Jing'an Branch", "Shanghai, China"), (6, "Beijing Chaoyang Branch", "Beijing, China"),
+    (7, "Beijing Haidian Branch", "Beijing, China"), (8, "Chengdu High-Tech Branch", "Chengdu, China"),
+    (9, "Hangzhou West Lake Branch", "Hangzhou, China"), (10, "Hong Kong Central Branch", "Hong Kong, China"),
 ]
 
-# 画像比例与参数（全组可改，报告里写这张表）
+# Persona weights and parameters (editable by the team; include this table in the report)
 PERSONA_WEIGHTS = {"dca": 0.20, "active": 0.15, "trend": 0.35, "dormant": 0.25, "whale": 0.05}
-SURNAMES = "张王李赵刘陈杨黄周吴徐孙马朱胡郭何罗高林郑梁谢宋唐许韩冯邓曹彭"
-GIVEN = "伟芳娜敏静丽强磊军洋勇艳杰涛明超秀英霞平刚桂英雨欣子轩宇辰思远一诺浩然"
+LAST_NAMES = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+    "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson",
+    "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson",
+    "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson", "Walker",
+]
+FIRST_NAMES = [
+    "Alex", "Emma", "Liam", "Olivia", "Noah", "Ava", "Ethan", "Sophia", "Mason",
+    "Isabella", "James", "Mia", "Benjamin", "Charlotte", "Lucas", "Amelia", "Henry",
+    "Harper", "Daniel", "Evelyn", "Michael", "Abigail", "William", "Emily", "Alexander",
+    "Elizabeth", "David", "Sofia", "Joseph", "Ella", "Grace", "Samuel", "Chloe", "Owen", "Nora",
+]
 
 RISK_LEVELS = ["C1", "C2", "C3", "C4", "C5"]
 
 
 def random_name(rng: random.Random) -> str:
-    return rng.choice(SURNAMES) + "".join(rng.choice(GIVEN) for _ in range(rng.randint(1, 2)))
+    last_name = rng.choice(LAST_NAMES)
+    given_names = [rng.choice(FIRST_NAMES) for _ in range(rng.randint(1, 2))]
+    return " ".join(given_names + [last_name])
 
 
 def random_time(rng: random.Random) -> str:
-    """A 股连续竞价时段 09:30-11:30 / 13:00-15:00。"""
+    """A-share continuous auction sessions: 09:30-11:30 / 13:00-15:00."""
     if rng.random() < 0.55:
         minute = rng.randint(9 * 60 + 30, 11 * 60 + 30)
     else:
@@ -55,7 +71,7 @@ def random_time(rng: random.Random) -> str:
 
 
 def lot(amount_cash: float, price: float, rng: random.Random, max_lots: int = 50) -> int:
-    """把预算金额换成整手股数，不足一手返回 0。"""
+    """Convert a cash budget to a round-lot share volume; return 0 if less than one lot is affordable."""
     affordable = int(amount_cash / price / 100)
     if affordable <= 0:
         return 0
@@ -63,16 +79,16 @@ def lot(amount_cash: float, price: float, rng: random.Random, max_lots: int = 50
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="券商零售客户造数脚本")
+    parser = argparse.ArgumentParser(description="Synthetic data generator for a retail brokerage")
     parser.add_argument("--customers", type=int, default=100)
     parser.add_argument("--months", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--out", default="", help="输出目录（默认 data/generated，可用 data/sample 生成演示包）")
+    parser.add_argument("--out", default="", help="Output directory (default: data/generated; use data/sample for a demo package)")
     args = parser.parse_args()
     out_dir = Path(args.out) if args.out else OUT_DIR
     rng = random.Random(args.seed)
 
-    # ---------- 真实行情与交易日历 ----------
+    # ---------- Actual market data and trading calendar ----------
     quotes = pd.read_csv(RAW_DIR / "quotes_all.csv", dtype={"stock_code": str})
     quotes["trade_date"] = quotes["trade_date"].astype(str)
     end = quotes["trade_date"].max()
@@ -83,13 +99,13 @@ def main() -> None:
                  for r in win.itertuples(index=False)}
     stock_codes = sorted(win["stock_code"].unique())
     months = sorted({d[:7] for d in trading_days})
-    # 每月每股的月末收盘价（快照估值用）
+    # Month-end closing price for each stock in each month (used for snapshot valuation)
     month_last_close = {}
     for (code, month), grp in win.groupby(["stock_code", win["trade_date"].str[:7]]):
         month_last_close[(code, month)] = float(grp.sort_values("trade_date")["close"].iloc[-1])
-    print(f"交易窗口：{trading_days[0]} ~ {trading_days[-1]}，{len(trading_days)} 个交易日，{len(months)} 个月")
+    print(f"Trading window: {trading_days[0]} to {trading_days[-1]}, {len(trading_days)} trading days, {len(months)} months")
 
-    # ---------- 静态表 ----------
+    # ---------- Static tables ----------
     out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(BRANCHES, columns=["branch_id", "branch_name", "city"]).to_csv(
         out_dir / "branch.csv", index=False, encoding="utf-8-sig")
@@ -102,16 +118,18 @@ def main() -> None:
     for cid in range(1, args.customers + 1):
         persona = rng.choices(personas, weights)[0]
         branch_id = rng.randint(1, len(BRANCHES))
-        # 沉睡型开户在窗口附近（只交易前 2 个月），其余开户在 1-3 年前
+        # Dormant customers open accounts near the window (and trade only for the first 2 months);
+        # others open accounts 1-3 years earlier
         if persona == "dormant":
             open_date = str((pd.Timestamp(first_day) - pd.Timedelta(days=rng.randint(0, 45))).date())
         else:
             open_date = str((pd.Timestamp(first_day) - pd.Timedelta(days=rng.randint(365, 365 * 3))).date())
         customers.append((cid, random_name(rng), rng.choice("MF"), rng.randint(1955, 2005),
                           branch_id, open_date, rng.choices(RISK_LEVELS, [1, 2, 4, 3, 1])[0]))
-        accounts.append((cid, cid, "cash", open_date, "active"))  # 每客户 1 个账户，id 一致
+        accounts.append((cid, cid, "cash", open_date, "active"))  # One account per customer, with matching IDs
 
-        # 初始入金：普通 5-50 万，大户 300-1000 万；沉睡高净值也入金（Q9 素材）
+        # Initial funding: CNY 50k-500k for regular customers and CNY 3m-10m for whales;
+        # dormant high-net-worth customers also fund their accounts (material for Q9)
         init_cash = rng.uniform(3e6, 1e7) if persona == "whale" else rng.uniform(5e4, 5e5)
         fund_flows.append((cid, first_day, "in", round(init_cash, 2)))
 
@@ -124,7 +142,7 @@ def main() -> None:
         else:
             trade_days_used = trading_days
 
-        # 按月组织交易日
+        # Organize trading days by month
         days_by_month = {}
         for d in trade_days_used:
             days_by_month.setdefault(d[:7], []).append(d)
@@ -135,7 +153,7 @@ def main() -> None:
 
         for month, days in sorted(days_by_month.items()):
             if persona == "active":
-                # 高频活跃客户一天可有 1-2 笔（每月交易日仅约 22 天）
+                # Highly active customers may place 1-2 trades per day (only about 22 trading days per month)
                 base = rng.sample(days, min(len(days), rng.randint(18, 25)))
                 plan_days = base + [rng.choice(days) for _ in range(rng.randint(8, 15))]
             elif persona == "trend":
@@ -148,7 +166,7 @@ def main() -> None:
                 plan_days = rng.sample(days, min(len(days), rng.randint(3, 8)))
 
             for d in sorted(plan_days):
-                # 定投：每月固定日先转入再买入同一只股
+                # DCA: transfer funds on a fixed day each month, then buy the same stock
                 if persona == "dca":
                     fund_flows.append((cid, d, "in", round(dca_amount, 2)))
                     cash += dca_amount
@@ -156,13 +174,15 @@ def main() -> None:
                     side = "buy"
                 else:
                     code = rng.choice(stock_codes)
-                    # 无持仓只能买；有持仓时趋势/活跃 30% 概率卖，大户基本只买
+                    # Customers without holdings can only buy; trend/active customers with holdings
+                    # have a 30% chance of selling, while whales almost always buy
                     can_sell = bool(holdings) and persona in ("active", "trend")
                     side = "sell" if can_sell and rng.random() < 0.3 else "buy"
                     if side == "sell":
                         code = rng.choice(list(holdings))
                     elif persona == "trend":
-                        # 趋势型：优先选当日上涨股（close>open），字典查询避免全表扫描
+                        # Trend customers: prefer stocks rising that day (close>open);
+                        # use dictionary lookups to avoid full-table scans
                         for _ in range(5):
                             q = price_map.get((code, d))
                             if q and q[2]:
@@ -181,7 +201,8 @@ def main() -> None:
                     amount = round(price * volume, 2) if volume else 0.0
                     if (volume == 0 or amount > cash) and persona in ("active", "trend", "whale") \
                             and rng.random() < 0.6:
-                        # 现金不足一手：活跃/趋势/大户 60% 概率追加银证入金后再买（真实补仓行为）
+                        # Insufficient cash for one lot: active/trend/whale customers have a 60% chance
+                        # of making an additional bank-to-brokerage transfer before buying (realistic top-up behavior)
                         topup = round(init_cash * rng.uniform(0.2, 0.5), 2)
                         fund_flows.append((cid, d, "in", topup))
                         cash += topup
@@ -206,7 +227,7 @@ def main() -> None:
 
                 trades.append((cid, code, d, random_time(rng), side, price, volume, amount))
 
-    # ---------- 统一重放流水，生成月末快照 ----------
+    # ---------- Replay all transactions uniformly to generate month-end snapshots ----------
     pos_rows, asset_rows = [], []
     ff_by_acc = {}
     for acc, d, direction, amt in fund_flows:
@@ -267,10 +288,10 @@ def main() -> None:
             asset_rows.append((cid, month, round(cash_m, 2), round(mv_total, 2),
                                round(cash_m + mv_total, 2)))
 
-    # ---------- 输出 ----------
+    # ---------- Output ----------
     def save(name, rows, cols):
         pd.DataFrame(rows, columns=cols).to_csv(out_dir / f"{name}.csv", index=False, encoding="utf-8-sig")
-        print(f"{name}.csv：{len(rows)} 行")
+        print(f"{name}.csv: {len(rows)} rows")
 
     save("customer", customers, ["customer_id", "name", "gender", "birth_year", "branch_id", "open_date", "risk_level"])
     save("account", accounts, ["account_id", "customer_id", "account_type", "open_date", "status"])

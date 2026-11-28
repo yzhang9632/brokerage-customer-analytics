@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-W5 B1–B4 索引优化与可扩展性基准（PostgreSQL）。
-方法论：每条查询热身 2 遍，计时 5 遍取中位数；EXPLAIN (ANALYZE, BUFFERS) 留证。
+W5 B1-B4 index optimization and scalability benchmarks (PostgreSQL).
+Methodology: warm up each query twice, time five runs, and take the median;
+retain EXPLAIN (ANALYZE, BUFFERS) output as evidence.
 
-流程：优化前计时 → 建 scalability 测试表 → 加 indexes_pg.sql → 优化后计时。
-产出：data/benchmark/benchmark_results.csv（B1-B3 前后对比）
-      data/benchmark/scalability_results.csv（B4：10万/50万/100万行曲线）
-      data/benchmark/explain_*.txt（执行计划原文，报告截图素材）
-运行：export PGPASSWORD=... && python scripts/benchmark_pg.py
+Workflow: time queries before optimization -> create scalability test tables ->
+apply indexes_pg.sql -> time queries after optimization.
+Outputs: data/benchmark/benchmark_results.csv (before/after comparison for B1-B3)
+         data/benchmark/scalability_results.csv (B4 curves for 100k/500k/1M rows)
+         data/benchmark/explain_*.txt (raw execution plans for report screenshots)
+Run: export PGPASSWORD=... && python scripts/benchmark_pg.py
 """
 import os
 import re
@@ -38,14 +40,14 @@ B_QUERIES = {
 }
 
 B_DESCS = {
-    "B1": "客户交易明细点查（Q2 类）",
-    "B2": "月度成交额 TOP20（Q3，覆盖索引消除回表）",
-    "B3": "单客户近 90 天成交聚合（Q10 RFM 的 F/M 计算，与 B1 共用索引）",
+    "B1": "Customer trade detail lookup (Q2 type)",
+    "B2": "Top 20 stocks by monthly turnover (Q3; covering index avoids table lookups)",
+    "B3": "90-day trade aggregation for one customer (F/M calculation for Q10 RFM; shares an index with B1)",
 }
 
 
 def time_query(cur, sql: str) -> float:
-    """热身 2 遍 + 计时 5 遍取中位数，返回毫秒。"""
+    """Warm up twice, time five runs, and return the median in milliseconds."""
     for _ in range(2):
         cur.execute(sql)
         cur.fetchall()
@@ -62,7 +64,7 @@ def explain(cur, sql: str, path: Path) -> str:
     cur.execute(f"EXPLAIN (ANALYZE, BUFFERS) {sql}")
     lines = [r[0] for r in cur.fetchall()]
     path.write_text("\n".join(lines), encoding="utf-8")
-    # 优先抓主表 trade 的扫描行（子查询 daily_quote/month 的扫描不作为证据）
+    # Prefer the scan of the main trade table; scans in daily_quote/month subqueries are not used as evidence.
     scans = [l for l in lines if "Scan" in l]
     if not scans:
         return lines[0]
@@ -82,46 +84,46 @@ def main() -> None:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM trade")
             total = cur.fetchone()[0]
-            print(f"trade 总行数：{total}")
-            # 幂等：重跑时先回到"无优化索引"状态
+            print(f"Total rows in trade: {total}")
+            # Idempotency: restore the unoptimized index state before each rerun.
             cur.execute("DROP INDEX IF EXISTS idx_trade_account_date")
             cur.execute("DROP INDEX IF EXISTS idx_trade_month_cover")
             cur.execute("VACUUM ANALYZE trade")
 
             results = []
-            # ---------- 优化前 ----------
+            # ---------- Before optimization ----------
             for bid, sql in B_QUERIES.items():
                 ms = time_query(cur, sql)
                 plan = explain(cur, sql, OUT / f"explain_{bid}_before.txt")
                 results.append({"benchmark": bid, "desc": B_DESCS[bid], "rows": total,
                                 "before_ms": round(ms, 2), "plan_before": plan})
-                print(f"{bid} 优化前：{ms:.1f} ms | {plan}")
+                print(f"{bid} before optimization: {ms:.1f} ms | {plan}")
 
-            # ---------- B4 scalability：10万 / 50万 / 全量 ----------
+            # ---------- B4 scalability: 100k / 500k / full dataset ----------
             cur.execute("DROP TABLE IF EXISTS trade_100k; DROP TABLE IF EXISTS trade_500k;")
             cur.execute("CREATE TABLE trade_100k AS SELECT * FROM trade ORDER BY trade_id LIMIT 100000")
             cur.execute("CREATE TABLE trade_500k AS SELECT * FROM trade ORDER BY trade_id LIMIT 500000")
             scalability = []
             for table in ["trade_100k", "trade_500k", "trade"]:
-                # 同一聚合结构，不带任何索引的全表扫描
+                # Same aggregation structure, with a full table scan and no indexes.
                 sql = f"SELECT stock_code, SUM(amount) FROM {table} GROUP BY stock_code"
                 cur.execute(f"SELECT COUNT(*) FROM {table}")
                 n = cur.fetchone()[0]
                 ms = time_query(cur, sql)
                 scalability.append({"rows": n, "median_ms": round(ms, 2)})
-                print(f"B4 {table}（{n} 行）：{ms:.1f} ms")
+                print(f"B4 {table} ({n} rows): {ms:.1f} ms")
             cur.execute("DROP TABLE trade_100k; DROP TABLE trade_500k;")
 
-            # ---------- 加索引，优化后 ----------
+            # ---------- Add indexes, then measure after optimization ----------
             cur.execute(INDEXES_SQL.read_text(encoding="utf-8"))
-            cur.execute("VACUUM ANALYZE trade")  # 更新 visibility map，争取 index-only scan
+            cur.execute("VACUUM ANALYZE trade")  # Update the visibility map to enable index-only scans.
             for bid, sql in B_QUERIES.items():
                 ms = time_query(cur, sql)
                 plan = explain(cur, sql, OUT / f"explain_{bid}_after.txt")
                 r = next(x for x in results if x["benchmark"] == bid)
                 r["after_ms"] = round(ms, 2)
                 r["plan_after"] = plan
-                print(f"{bid} 优化后：{ms:.1f} ms | {plan}")
+                print(f"{bid} after optimization: {ms:.1f} ms | {plan}")
 
             import pandas as pd
             df = pd.DataFrame(results)[["benchmark", "desc", "rows", "before_ms", "after_ms",
@@ -131,7 +133,7 @@ def main() -> None:
             pd.DataFrame(scalability).to_csv(OUT / "scalability_results.csv",
                                              index=False, encoding="utf-8-sig")
             print("\n" + df.to_string(index=False))
-            print(f"\n结果已存：{OUT}")
+            print(f"\nResults saved to: {OUT}")
 
 
 if __name__ == "__main__":

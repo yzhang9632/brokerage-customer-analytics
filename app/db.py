@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""数据库连接与查询（Streamlit 各页面共用）。"""
+"""Database connection and query helpers shared by all Streamlit pages."""
 import os
 import warnings
 from pathlib import Path
@@ -8,7 +8,8 @@ import pandas as pd
 import psycopg
 import streamlit as st
 
-# 自动读取项目根目录 .env（含 PGPASSWORD），双击/命令行启动都能拿到密码；.env 不进 Git
+# Automatically load .env (including PGPASSWORD) from the project root so both
+# double-click and command-line launches can access the password; .env is not committed to Git.
 _env_file = Path(__file__).resolve().parents[1] / ".env"
 if _env_file.exists():
     for _line in _env_file.read_text(encoding="utf-8").splitlines():
@@ -31,12 +32,12 @@ def get_dsn() -> dict:
 
 @st.cache_data(ttl=600)
 def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """看板查询缓存 10 分钟，避免每次交互重跑大表聚合。"""
+    """Cache dashboard queries for 10 minutes to avoid rerunning large-table aggregations on every interaction."""
     with psycopg.connect(**get_dsn()) as conn:
         return pd.read_sql(sql, conn, params=params)
 
 
 def query_fresh(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    """下单页等需要实时数据的地方使用，不走缓存。"""
+    """Use uncached queries where real-time data is required, such as the order entry page."""
     with psycopg.connect(**get_dsn()) as conn:
         return pd.read_sql(sql, conn, params=params)

@@ -1,10 +1,10 @@
 -- ============================================================
--- Q1–Q12 业务查询 + 指标口径字典 · PostgreSQL 正式版
--- 业务逻辑与 SQLite 版一致，仅改为 PostgreSQL 日期/聚合语法
+-- Q1–Q12 Business Queries + Metric Definition Dictionary · PostgreSQL Final Version
+-- Business logic matches the SQLite version; only date/aggregation syntax has been adapted for PostgreSQL
 -- ============================================================
 
--- Q1【基础】各营业部客户数、资产总额汇总
--- 口径：取 asset_snapshot 最新月份；总资产=现金+持仓市值
+-- Q1 [Basic] Customer Count and Total Assets by Branch
+-- Definition: Use the latest month in asset_snapshot; total assets = cash + market value of holdings
 SELECT b.branch_name,
        COUNT(c.customer_id)            AS customer_cnt,
        ROUND(SUM(s.total_asset), 2)    AS total_asset,
@@ -17,8 +17,8 @@ WHERE s.month = (SELECT MAX(month) FROM asset_snapshot)
 GROUP BY b.branch_id, b.branch_name
 ORDER BY total_asset DESC;
 
--- Q2【基础】客户 360 视图
--- 口径：基本信息 + 本月成交笔数/金额 + 最新月资产 + 当前持仓清单
+-- Q2 [Basic] Customer 360 View
+-- Definition: Basic profile + current-month trade count/amount + latest monthly assets + current holdings list
 SELECT c.customer_id, c.name, b.branch_name, c.risk_level, c.open_date,
        (SELECT COUNT(*) FROM trade t JOIN account a2 ON a2.account_id = t.account_id
          WHERE a2.customer_id = c.customer_id
@@ -27,7 +27,7 @@ SELECT c.customer_id, c.name, b.branch_name, c.risk_level, c.open_date,
          WHERE a2.customer_id = c.customer_id
            AND t.month = (SELECT MAX(month) FROM trade))      AS month_trade_amount,
        s.total_asset, s.cash, s.market_value,
-       (SELECT STRING_AGG(st.stock_name || '×' || p.shares::text, '、')
+       (SELECT STRING_AGG(st.stock_name || '×' || p.shares::text, ', ')
           FROM position_snapshot p JOIN stock st ON st.stock_code = p.stock_code
          WHERE p.account_id = a.account_id
            AND p.month = (SELECT MAX(month) FROM position_snapshot)) AS holdings
@@ -38,8 +38,8 @@ JOIN asset_snapshot s ON s.account_id = a.account_id
                       AND s.month = (SELECT MAX(month) FROM asset_snapshot)
 WHERE c.customer_id = 1;
 
--- Q3【基础】月度成交额 TOP 20 股票
--- 口径：买卖双边成交额均计入；示例取最新月
+-- Q3 [Basic] Top 20 Stocks by Monthly Turnover
+-- Definition: Include both buy and sell turnover; the example uses the latest month
 SELECT s.stock_code, s.stock_name, s.industry,
        COUNT(t.trade_id)             AS trade_cnt,
        ROUND(SUM(t.amount), 2)       AS turnover
@@ -50,8 +50,8 @@ GROUP BY t.stock_code, s.stock_code, s.stock_name, s.industry
 ORDER BY turnover DESC
 LIMIT 20;
 
--- Q4【基础】各营业部月度银证转账净流入
--- 口径：净流入 = 入金(in) − 出金(out)
+-- Q4 [Basic] Monthly Net Bank-Securities Transfer Inflow by Branch
+-- Definition: Net inflow = deposits (in) − withdrawals (out)
 SELECT b.branch_name,
        to_char(f.trans_date, 'YYYY-MM') AS month,
        ROUND(SUM(CASE WHEN f.direction = 'in' THEN f.amount ELSE -f.amount END), 2) AS net_inflow
@@ -62,8 +62,8 @@ JOIN branch b   ON b.branch_id = c.branch_id
 GROUP BY b.branch_id, b.branch_name, to_char(f.trans_date, 'YYYY-MM')
 ORDER BY month, net_inflow DESC;
 
--- Q5【进阶】客户月活跃率
--- 口径：活跃 = 当月 ≥1 笔成交；分母 = 截至当月末已开户客户数
+-- Q5 [Advanced] Monthly Customer Activity Rate
+-- Definition: Active = at least one trade in the month; denominator = customers who opened accounts by month-end
 WITH active AS (
     SELECT month, COUNT(DISTINCT account_id) AS active_cnt
     FROM trade GROUP BY month
@@ -78,8 +78,8 @@ SELECT a.month,
 FROM active a
 ORDER BY a.month;
 
--- Q6【进阶】客户资产五分层
--- 口径：最新月总资产 NTILE(5)，第 1 层 = 头部 20%
+-- Q6 [Advanced] Customer Asset Quintiles
+-- Definition: NTILE(5) over latest-month total assets; tier 1 = top 20%
 WITH latest AS (
     SELECT account_id, total_asset FROM asset_snapshot
     WHERE month = (SELECT MAX(month) FROM asset_snapshot)
@@ -95,8 +95,8 @@ FROM ranked r
 GROUP BY r.asset_tier
 ORDER BY r.asset_tier;
 
--- Q7【进阶】全市场成交额环比
--- 口径：环比 = (本月−上月)/上月；同比在 12 个月数据上使用 LAG(turnover, 12)
+-- Q7 [Advanced] Market-Wide Month-over-Month Turnover
+-- Definition: MoM = (current month − previous month) / previous month; for YoY with 12 months of data, use LAG(turnover, 12)
 WITH m AS (
     SELECT month, SUM(amount) AS turnover FROM trade GROUP BY month
 )
@@ -108,8 +108,8 @@ SELECT month,
 FROM m
 ORDER BY month;
 
--- Q8【进阶】客户月均换手率 TOP 20
--- 口径（简化）：月换手率 = 当月买卖成交总额 / 当月末总资产
+-- Q8 [Advanced] Top 20 Customers by Monthly Turnover Rate
+-- Simplified definition: monthly turnover rate = total buy-and-sell trade amount / month-end total assets
 SELECT t.account_id, c.name, t.month,
        ROUND(SUM(t.amount), 2)        AS month_turnover,
        s.total_asset,
@@ -121,8 +121,8 @@ GROUP BY t.account_id, c.name, t.month, s.total_asset
 ORDER BY turnover_rate DESC
 LIMIT 20;
 
--- Q9【进阶】沉睡高净值唤醒名单
--- 口径：距基准日 >90 天无成交 且 最新月总资产 >10 万；从未成交者用开户日替代
+-- Q9 [Advanced] Dormant High-Net-Worth Customer Reactivation List
+-- Definition: no trades for more than 90 days before the reference date and latest total assets above 100,000; use account-opening date for customers with no trades
 WITH ref AS (SELECT MAX(trade_date) AS d FROM daily_quote),
 last_trade AS (
     SELECT account_id, MAX(trade_date) AS last_d FROM trade GROUP BY account_id
@@ -140,8 +140,8 @@ WHERE (SELECT d FROM ref) - COALESCE(lt.last_d, c.open_date) > 90
   AND s.total_asset > 100000
 ORDER BY s.total_asset DESC;
 
--- Q10【挑战】客户 RFM 分层画像
--- 口径：R=最近成交距基准日天数；F/M=近 90 天笔数/金额；三维 NTILE(3)
+-- Q10 [Challenge] Customer RFM Segmentation
+-- Definition: R = days since latest trade; F/M = trade count/amount in the last 90 days; each dimension uses NTILE(3)
 WITH ref AS (SELECT MAX(trade_date) AS d FROM daily_quote),
 rfm AS (
     SELECT account_id,
@@ -159,16 +159,16 @@ scored AS (
 )
 SELECT account_id, R AS recency_days, F AS freq_90d, ROUND(M, 2) AS monetary_90d,
        r_score || '-' || f_score || '-' || m_score AS rfm_segment,
-       CASE WHEN r_score = 3 AND f_score = 3 AND m_score = 3 THEN '重要价值客户'
-            WHEN r_score = 3 AND m_score = 3 THEN '高价值活跃客户'
-            WHEN r_score = 1 AND m_score = 3 THEN '高价值流失风险客户'
-            WHEN r_score = 1 THEN '沉睡客户'
-            ELSE '一般客户' END AS segment_label
+       CASE WHEN r_score = 3 AND f_score = 3 AND m_score = 3 THEN 'Key Value'
+            WHEN r_score = 3 AND m_score = 3 THEN 'High Value Active'
+            WHEN r_score = 1 AND m_score = 3 THEN 'High Value Churn Risk'
+            WHEN r_score = 1 THEN 'Dormant'
+            ELSE 'General' END AS segment_label
 FROM scored
 ORDER BY M DESC;
 
--- Q11【挑战】客户状态月度迁徙矩阵
--- 口径：new=开户当月；active=当月有成交；silent=当月无成交但此前 90 天内有成交；churned=其余
+-- Q11 [Challenge] Monthly Customer-State Transition Matrix
+-- Definition: new = account-opening month; active = traded this month; silent = no trades this month but traded within the prior 90 days; churned = all others
 WITH months AS (SELECT DISTINCT month FROM asset_snapshot),
 states AS (
     SELECT a.account_id, m.month,
@@ -196,8 +196,8 @@ WHERE prev_status IS NOT NULL
 GROUP BY prev_status, status
 ORDER BY prev_status, customer_cnt DESC;
 
--- Q12【挑战】持仓浮盈 TOP 20
--- 口径：浮动盈亏 = (最新真实收盘价 − 加权平均成本) × 持股数
+-- Q12 [Challenge] Top 20 Positions by Unrealized Profit
+-- Definition: unrealized P&L = (latest real closing price - weighted average cost) × shares held
 WITH latest_close AS (
     SELECT stock_code, close FROM daily_quote
     WHERE trade_date = (SELECT MAX(trade_date) FROM daily_quote)

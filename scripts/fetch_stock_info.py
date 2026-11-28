@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-补拉 stock 表剩余字段：行业 industry、上市日期 list_date。
-数据源：AKShare 东财个股信息接口（stock_individual_info_em）。
+Fetch the remaining stock table fields: industry and list_date.
+Data source: AKShare Eastmoney individual stock information API (stock_individual_info_em).
 
-用法：python scripts/fetch_stock_info.py
-产出：data/raw/stock_info.csv（stock_code, stock_name, industry, list_date）
-每只落盘一次，中断后重跑自动续拉。
+Usage: python scripts/fetch_stock_info.py
+Output: data/raw/stock_info.csv (stock_code, stock_name, industry, list_date)
+Each stock is saved immediately, so rerunning after an interruption resumes automatically.
 """
 import time
 from pathlib import Path
@@ -22,7 +22,7 @@ def fetch_one(code: str) -> tuple[str, str]:
     info = ak.stock_individual_info_em(symbol=code)
     kv = dict(zip(info["item"], info["value"]))
     industry = str(kv.get("行业", ""))
-    list_raw = str(kv.get("上市时间", ""))  # 格式 YYYYMMDD
+    list_raw = str(kv.get("上市时间", ""))  # Format: YYYYMMDD
     list_date = (
         f"{list_raw[:4]}-{list_raw[4:6]}-{list_raw[6:]}" if len(list_raw) == 8 else ""
     )
@@ -35,7 +35,7 @@ def main() -> None:
     if OUT.exists():
         rows = pd.read_csv(OUT, dtype={"stock_code": str}).to_dict("records")
     done_codes = {r["stock_code"] for r in rows}
-    print(f"已有 {len(done_codes)} 只，待补拉 {len(cons) - len(done_codes)} 只", flush=True)
+    print(f"Already fetched: {len(done_codes)}; remaining: {len(cons) - len(done_codes)}", flush=True)
 
     for i, row in enumerate(cons.itertuples(index=False), 1):
         code = str(row.stock_code).zfill(6)
@@ -51,10 +51,10 @@ def main() -> None:
             })
             print(f"[{i}/300] {code} {row.stock_name} | {industry} | {list_date}", flush=True)
         except Exception as e:
-            print(f"[{i}/300] {code} 失败：{e}", flush=True)
+            print(f"[{i}/300] {code} failed: {e}", flush=True)
         pd.DataFrame(rows).to_csv(OUT, index=False, encoding="utf-8-sig")
         time.sleep(0.3)
-    print(f"完成：{len(rows)}/300 只，已存 stock_info.csv", flush=True)
+    print(f"Completed: {len(rows)}/300 stocks; saved to stock_info.csv", flush=True)
 
 
 if __name__ == "__main__":

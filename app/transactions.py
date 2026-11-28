@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-开户与下单事务（rubric engineering practices 核心演示）。
+Account opening and order placement transactions (core rubric engineering practices demonstration).
 
-设计要点：
-- 现金与持仓不单独存表，采用账本模型：由 fund_flow / trade 流水实时计算；
-- 下单先 SELECT ... FOR UPDATE 锁定账户行，防止并发下超额支出；
-- 资金/持仓不足 → 显式 ROLLBACK 并返回失败原因；成功才 COMMIT；
-- 成交价取该股票最新真实收盘价，交易日取行情最新日期。
+Design highlights:
+- Cash and holdings are not stored in separate tables. A ledger model calculates them in real time
+  from fund_flow and trade records.
+- Before placing an order, SELECT ... FOR UPDATE locks the account row to prevent concurrent overspending.
+- Insufficient cash or holdings triggers an explicit ROLLBACK and returns the reason; COMMIT occurs only on success.
+- The execution price is the stock's latest actual closing price, and the trade date is the latest quote date.
 """
 import psycopg
 
@@ -33,16 +34,16 @@ def current_cash(account_id: int) -> float:
 
 def place_order(account_id: int, stock_code: str, side: str, volume: int) -> dict:
     if side not in ("buy", "sell"):
-        return {"ok": False, "msg": "方向必须为 buy/sell"}
+        return {"ok": False, "msg": "Side must be buy/sell"}
     if volume <= 0 or volume % 100 != 0:
-        return {"ok": False, "msg": "数量必须为 100 的整数倍（A 股整手规则）"}
+        return {"ok": False, "msg": "Volume must be a positive multiple of 100 (A-share board-lot rule)"}
 
     with psycopg.connect(**get_dsn()) as conn, conn.cursor() as cur:
         try:
             cur.execute("SELECT account_id FROM account WHERE account_id=%s FOR UPDATE", (account_id,))
             if cur.fetchone() is None:
                 conn.rollback()
-                return {"ok": False, "msg": f"账户 {account_id} 不存在，事务已回滚"}
+                return {"ok": False, "msg": f"Account {account_id} does not exist; transaction rolled back"}
 
             cur.execute("""SELECT close, trade_date FROM daily_quote
                            WHERE stock_code=%s ORDER BY trade_date DESC LIMIT 1""", (stock_code,))
@@ -53,16 +54,16 @@ def place_order(account_id: int, stock_code: str, side: str, volume: int) -> dic
                 cur.execute(CASH_SQL, (account_id, account_id))
                 cash = float(cur.fetchone()[0])
                 if amount > cash:
-                    conn.rollback()  # 失败路径：余额不足回滚，演示时必讲
+                    conn.rollback()  # Failure path: roll back on insufficient funds; always demonstrate this path.
                     return {"ok": False,
-                            "msg": f"余额不足，事务已回滚：需 ¥{amount:,.2f}，可用 ¥{cash:,.2f}"}
+                            "msg": f"Insufficient funds; transaction rolled back: required ¥{amount:,.2f}, available ¥{cash:,.2f}"}
             else:
                 cur.execute(HELD_SQL, (account_id, stock_code))
                 held = int(cur.fetchone()[0])
                 if volume > held:
                     conn.rollback()
                     return {"ok": False,
-                            "msg": f"持仓不足，事务已回滚：拟卖 {volume} 股，当前持有 {held} 股"}
+                            "msg": f"Insufficient holdings; transaction rolled back: attempted to sell {volume} shares, currently hold {held} shares"}
 
             cur.execute("""INSERT INTO trade
                            (account_id, stock_code, trade_date, trade_time, side, price, volume, amount, month)
@@ -72,16 +73,16 @@ def place_order(account_id: int, stock_code: str, side: str, volume: int) -> dic
             trade_id = cur.fetchone()[0]
             conn.commit()
             return {"ok": True, "trade_id": trade_id,
-                    "msg": f"{'买入' if side == 'buy' else '卖出'}成功（订单号 {trade_id}）：{stock_code} × {volume} 股，"
-                           f"成交价 ¥{float(price):.2f}，金额 ¥{amount:,.2f}（{trade_date}）"}
+                    "msg": f"{'Buy' if side == 'buy' else 'Sell'} order executed (order ID {trade_id}): {stock_code} × {volume} shares, "
+                           f"execution price ¥{float(price):.2f}, amount ¥{amount:,.2f} ({trade_date})"}
         except Exception as e:
             conn.rollback()
-            return {"ok": False, "msg": f"异常，事务已回滚：{e}"}
+            return {"ok": False, "msg": f"Error; transaction rolled back: {e}"}
 
 
 def open_account(name: str, gender: str, birth_year: int, branch_id: int,
                  risk_level: str, init_cash: float) -> dict:
-    """开户事务：customer + account + 初始入金三张表原子写入，任一步失败全部回滚。"""
+    """Account opening transaction: atomically write customer, account, and the initial deposit; roll back everything on any failure."""
     with psycopg.connect(**get_dsn()) as conn, conn.cursor() as cur:
         try:
             cur.execute("SELECT MAX(trade_date) FROM daily_quote")
@@ -100,8 +101,8 @@ def open_account(name: str, gender: str, birth_year: int, branch_id: int,
                                VALUES (%s, %s, 'in', %s)""", (new_id, open_date, round(init_cash, 2)))
             conn.commit()
             return {"ok": True, "customer_id": new_id,
-                    "msg": f"开户成功：客户号/资金账号 {new_id}，"
-                           f"初始入金 ¥{init_cash:,.2f}，开户日期 {open_date}"}
+                    "msg": f"Account opened: customer ID/cash account {new_id}, "
+                           f"initial deposit ¥{init_cash:,.2f}, opening date {open_date}"}
         except Exception as e:
             conn.rollback()
-            return {"ok": False, "msg": f"开户失败，事务已回滚（customer/account 均不残留）：{e}"}
+            return {"ok": False, "msg": f"Account opening failed; transaction rolled back (no residual customer/account records): {e}"}

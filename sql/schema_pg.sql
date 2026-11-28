@@ -1,6 +1,6 @@
--- 券商零售客户经营分析数据库 · PostgreSQL 正式版 DDL（9 表）
--- 课程要求 client-server DBMS，本文件为最终交付版本；schema.sql 仅保留 SQLite 迁移前备份。
--- 日期使用原生 DATE；month 统一 TEXT 'YYYY-MM'，由导入脚本从 trade_date 生成。
+-- Retail Brokerage Customer Operations Analytics Database · PostgreSQL Final DDL (9 Tables)
+-- The course requires a client-server DBMS; this file is the final deliverable. schema.sql is retained only as a pre-migration SQLite backup.
+-- Dates use native DATE; month is uniformly TEXT in 'YYYY-MM' format, generated from trade_date by the import script.
 
 CREATE TABLE branch (
     branch_id   INTEGER PRIMARY KEY,
@@ -85,5 +85,5 @@ CREATE TABLE asset_snapshot (
     PRIMARY KEY (account_id, month)
 );
 
--- 仅保留基础索引；B1-B4 的优化索引另放 indexes_pg.sql，便于做优化前后对照
+-- Retain only the baseline index; optimization indexes for B1–B4 are in indexes_pg.sql to support before-and-after comparisons
 CREATE INDEX idx_trade_month ON trade (month);

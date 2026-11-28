@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""客户查询：Q2 客户 360 + 持仓浮盈（Q12）+ 近期交易明细。"""
+"""Customer 360: Q2 customer profile + unrealized position P/L (Q12) + recent trade details."""
 import streamlit as st
 
 from db import query
 
-st.set_page_config(page_title="客户查询", layout="wide")
-st.title("🔍 客户 360 查询")
+st.set_page_config(page_title="Customer 360", layout="wide")
+st.title("🔍 Customer 360")
 
-cid = st.number_input("输入客户号（1–10000）", min_value=1, max_value=10000, value=42, step=1)
+cid = st.number_input("Customer ID (1–10000)", min_value=1, max_value=10000, value=42, step=1)
 
 info = query("""
 SELECT c.customer_id, c.name, b.branch_name, c.risk_level, c.open_date,
@@ -20,18 +20,18 @@ JOIN asset_snapshot s ON s.account_id=a.account_id
 WHERE c.customer_id=%s
 """, (cid,))
 if info.empty:
-    st.warning("该客户不存在或尚无资产快照")
+    st.warning("This customer does not exist or has no asset snapshot")
     st.stop()
 
 r = info.iloc[0]
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("客户", f"{r['name']}（{r.risk_level}）")
-c2.metric("总资产", f"¥{r.total_asset:,.0f}")
-c3.metric("现金", f"¥{r.cash:,.0f}")
-c4.metric("持仓市值", f"¥{r.market_value:,.0f}")
-st.caption(f"营业部：{r.branch_name} ｜ 开户日期：{r.open_date}")
+c1.metric("Customer", f"{r['name']} ({r.risk_level})")
+c2.metric("Total Assets", f"¥{r.total_asset:,.0f}")
+c3.metric("Cash", f"¥{r.cash:,.0f}")
+c4.metric("Market Value of Holdings", f"¥{r.market_value:,.0f}")
+st.caption(f"Branch: {r.branch_name} | Date Opened: {r.open_date}")
 
-st.subheader("当前持仓与浮动盈亏（Q12 口径：最新真实收盘价 vs 加权成本）")
+st.subheader("Current Positions & Unrealized P/L (Q12: latest actual closing price vs. weighted average cost)")
 pos = query("""
 WITH lc AS (SELECT stock_code, close FROM daily_quote
             WHERE trade_date=(SELECT MAX(trade_date) FROM daily_quote))
@@ -46,7 +46,7 @@ ORDER BY pnl DESC
 """, (cid,))
 st.dataframe(pos, use_container_width=True, hide_index=True)
 
-st.subheader("最近 50 笔交易")
+st.subheader("Last 50 Trades")
 tr = query("""
 SELECT t.trade_date, t.trade_time, s.stock_name, t.side, t.price, t.volume, t.amount
 FROM trade t JOIN stock s ON s.stock_code=t.stock_code
